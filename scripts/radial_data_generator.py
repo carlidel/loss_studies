@@ -13,8 +13,8 @@ import time
 savepath = "/afs/cern.ch/work/c/camontan/public/loss_studies/data"
 
 # Set sampling
-samples = 30
-dr = 0.001
+samples = 25
+dr = 0.0025
 
 # Set times
 max_turns = 1000000
