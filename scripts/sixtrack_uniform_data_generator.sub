@@ -1,0 +1,12 @@
+executable              = sixtrack_uniform_data_generator.sh
+arguments               = $(ClusterId)$(ProcId)
+output                  = ../log/out/sx_unif.$(ClusterId).$(ProcId).out
+error                   = ../log/err/sx_unif.$(ClusterId).$(ProcId).err
+log                     = ../log/log/sx_unif.$(ClusterId).log
+should_transfer_files   = YES
+transfer_input_files    = ./sixtrack_uniform_data_generator.py
+when_to_transfer_output = ON_EXIT
++JobFlavour = "tomorrow"
+request_GPUs = 1
+request_CPUs = 1
+queue

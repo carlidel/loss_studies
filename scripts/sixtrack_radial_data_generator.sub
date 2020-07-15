@@ -1,0 +1,12 @@
+executable              = sixtrack_radial_data_generator.sh
+arguments               = $(ClusterId)$(ProcId)
+output                  = ../log/out/sx_rad.$(ClusterId).$(ProcId).out
+error                   = ../log/err/sx_rad.$(ClusterId).$(ProcId).err
+log                     = ../log/log/sx_rad.$(ClusterId).log
+should_transfer_files   = YES
+transfer_input_files    = ./sixtrack_radial_data_generator.py
+when_to_transfer_output = ON_EXIT
++JobFlavour = "tomorrow"
+request_GPUs = 1
+request_CPUs = 1
+queue
