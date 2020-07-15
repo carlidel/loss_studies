@@ -36,7 +36,7 @@ while time.time() - time_start < max_execution_time:
         samples,
         starting_radius=0.1
     )
-    engine.block_compute(max_turns, min_turns)
+    engine.scan(max_turns)
     engine.save_values(savepath + "unif_henon_eps_{}.pkl".format(int(epsilon)))
     
     print("Done Epsilon {}, seconds passed: {}".format(
