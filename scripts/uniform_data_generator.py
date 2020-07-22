@@ -7,7 +7,7 @@ import henon_map as hm
 import time
 
 # Set savepath (ON AFS FOR HTCONDOR!!!)
-savepath = "/afs/cern.ch/work/c/camontan/public/loss_studies/data"
+savepath = "/afs/cern.ch/work/c/camontan/public/loss_studies/data/"
 
 # Set sampling
 samples = 30

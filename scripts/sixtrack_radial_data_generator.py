@@ -11,7 +11,7 @@ import sixtrackwrap as sx
 
 import time
 
-savepath = "/afs/cern.ch/work/c/camontan/public/loss_studies/data"
+savepath = "/afs/cern.ch/work/c/camontan/public/loss_studies/data/"
 
 min_turns = 100
 max_turns = 100000

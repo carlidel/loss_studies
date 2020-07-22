@@ -10,13 +10,13 @@ import itertools
 import sixtrackwrap as sx
 import time
 
-savepath = "/afs/cern.ch/work/c/camontan/public/loss_studies/data"
+savepath = "/afs/cern.ch/work/c/camontan/public/loss_studies/data/"
 
 max_turns = 100000
 
 top = 35.0
 samples = 35
-starting_radius = 12.5  # USE IT CAREFULLY AS IT REQUIRES PRIOR KNOWLEDGE ON DA
+starting_radius = 10.0  # USE IT CAREFULLY AS IT REQUIRES PRIOR KNOWLEDGE ON DA
 
 engine = sx.uniform_scanner(
     top,
