@@ -10,4 +10,4 @@ export PATH=$MYPYTHON/bin:$PATH
 
 which python
 
-python3 radial_data_generator.py
+python3 radial_data_generator.py $1 $2 $3 $4 $5 $6

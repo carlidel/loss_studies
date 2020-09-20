@@ -1,6 +1,8 @@
 # Misc
 .virtual_documents/*
 .vscode/*
+*.csv
+*.png
 
 # Pickle data
 *.pkl

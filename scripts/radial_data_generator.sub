@@ -9,4 +9,5 @@ when_to_transfer_output = ON_EXIT
 +JobFlavour = "tomorrow"
 request_CPUs = 1
 request_GPUs = 1
-queue
+
+queue arguments from radial_data.txt
