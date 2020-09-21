@@ -9,6 +9,7 @@ import henon_map as hm
 
 # Set savepath (ON AFS FOR HTCONDOR!!!)
 savepath = "/afs/cern.ch/work/c/camontan/public/loss_studies/data/"
+tempdir = "/afs/cern.ch/work/c/camontan/public/loss_studies/tmp/"
 
 # Load parameters
 angular_samples = int(sys.argv[1])
@@ -30,7 +31,8 @@ engine = hm.radial_block.generate_instance(
     theta2,
     epsilon,
     max_radius,
-    starting_radius
+    starting_radius,
+    tempdir=tempdir
 )
 
 engine.scan(max_turns)
