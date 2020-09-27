@@ -17,6 +17,9 @@ from tqdm.autonotebook import tqdm
 import sixtrackwrap as sx
 import crank_nicolson_numba.nekhoroshev as nk
 
+# Lmfit
+from lmfit import Minimizer, Parameters, report_fit
+
 ## Prepare inverse functions for obtaining DA from loss values
 
 # Uniform 4D distribution
@@ -126,9 +129,10 @@ def chi_2(original, estimate):
 
 ### Model 2
 
-@njit
 def model_2(x, rho, n0, k):
-    return rho * np.power(k / (2 * np.exp(1)), k) / (np.power(np.log(x / n0), k))
+    temp = (np.power(np.log(x / n0), k))
+    temp[np.isnan(temp)] = 0.0
+    return rho * np.power(k / (2 * np.exp(1)), k) / temp
 
 
 def explore_k_model_2(turns, da, k_min, k_max, n_samples):
@@ -149,14 +153,44 @@ def explore_k_model_2(turns, da, k_min, k_max, n_samples):
     return np.asarray(pars), np.asarray(errs), np.asarray(co_pars)
 
 
+def model_2_lmfit(params, x, data):
+    rho = params["rho"]
+    n0 = params["n0"]
+    k = params["k"]
+    model = model_2(x, rho, n0, k)
+    return model - data
+
+
+def fit_model_2(turns, DA):
+    params = Parameters()
+    params.add("rho", value=1, min=0, vary=True)
+    params.add("n0", value=1, min=0, max=turns.min() * 0.5, vary=True)
+    params.add("k", value=1, min=0, vary=True)
+    minner = Minimizer(model_2_lmfit, params, fcn_args=(turns, DA))
+    result = minner.minimize(method="basinhopping")
+    final = DA + result.residual
+    return result, final
+
+
+def fit_model_2_fixed_n0(turns, DA):
+    params = Parameters()
+    params.add("rho", value=1, min=0, vary=True)
+    params.add("n0", value=1, vary=False)
+    params.add("k", value=1, min=0, vary=True)
+    minner = Minimizer(model_2_lmfit, params, fcn_args=(turns, DA))
+    result = minner.minimize(method="basinhopping")
+    final = DA + result.residual
+    return result, final
+
+
 ### Model 4
 
 def model_4(x, rho, k):
     lamb = 0.5
-    return np.real(
-        rho
-        / np.power(-2 * np.exp(1) * lamb * lambertw(- (1 / (2 * np.exp(1) * lamb)) * np.power(rho / 6, 1 / k) * np.power((8/7) * x, -1 / (lamb * k)), -1), k)
-    )
+    lambert = lambertw(- (1 / (2 * np.exp(1) * lamb)) * np.power(rho / 6, 1 / k) * np.power((8/7) * x, -1 / (lamb * k)), -1)
+    lambert[np.isnan(lambert)] = -np.inf
+    lambert = np.real(lambert)
+    return (rho / np.power(-2 * np.exp(1) * lamb * lambert, k))
 
 def explore_k_model_4(turns, da, k_min, k_max, n_samples):
     ks = np.linspace(k_min, k_max, n_samples)
@@ -175,15 +209,34 @@ def explore_k_model_4(turns, da, k_min, k_max, n_samples):
         errs.append(chi_2(da, model_4(turns, par[0], k)))
     return np.asarray(pars), np.asarray(errs), np.asarray(co_pars)
 
+
+def model_4_lmfit(params, x, data):
+    rho = params["rho"]
+    k = params["k"]
+    model = model_4(x, rho, k)
+    return model - data
+
+
+def fit_model_4(turns, DA):
+    params = Parameters()
+    params.add("rho", value=1, min=0, vary=True)
+    params.add("k", value=1, min=0, vary=True)
+    minner = Minimizer(model_4_lmfit, params, fcn_args=(turns, DA))
+    result = minner.minimize(method="basinhopping")
+    final = DA + result.residual
+    return result, final
+
+
 ### A more free Model 4
 
 def model_4_free(x, rho, n0, k):
+    #print(rho, n0, k)
     lamb = 0.5
-    temp = (
-        rho / (np.power(- 2 * lamb * np.exp(1) * lambertw(- (1 / (lamb * k)) * np.power(x / n0, - 1 / (lamb * k)), -1), k))
-    )
-    
-    return np.real(temp) # TODO: FIX IT WITH PROPER MATH!!!
+    lambert = lambertw(- (1 / (lamb * k)) *
+                       np.power(x / n0, - 1 / (lamb * k)), -1)
+    lambert[np.isnan(lambert)] = -np.inf
+    lambert = np.real(lambert)
+    return (rho / (np.power(- 2 * lamb * np.exp(1) * lambert, k)))
 
 
 def explore_model_4_free(turns, da, k_min, k_max, k_samples):
@@ -202,6 +255,93 @@ def explore_model_4_free(turns, da, k_min, k_max, k_samples):
         co_pars.append(co_par)
         errs.append(chi_2(da, model_4_free(turns, par[0], par[1], k)))
     return np.asarray(pars), np.asarray(errs), np.asarray(co_pars)
+
+
+def model_4_free_lmfit(params, x, data):
+    rho = params["rho"]
+    k = params["k"]
+    n0 = params["n0"]
+    model = model_4_free(x, rho, n0, k)
+    return model - data
+
+
+def fit_model_4_free(turns, DA):
+    params = Parameters()
+    params.add("rho", value=1, min=0, vary=True)
+    params.add("n0", value=1, min=0, max=turns.min()*0.5, vary=True)
+    params.add("k", value=1, min=0, vary=True)
+    minner = Minimizer(model_4_free_lmfit, params, fcn_args=(turns, DA))
+    result = minner.minimize(method="basinhopping")
+    final = DA + result.residual
+    return result, final
+
+# Fokker-Plank
+
+def fp_lmfit(params, x, data, dt, I0, I_max, iter_step):
+    # Gathering parameters
+    k = params["k"]
+    I_star = params["I_star"]
+
+    print("k={}, I_star={}".format(k, I_star))
+
+    # Declaring the engine
+    engine_nk = nk.cn_nekhoroshev(I_max, 1.0, I_star, 1 / (k * 2), 0, I0, dt)
+    multiplier = 0.1 / integrate.simps(engine_nk.diffusion, np.linspace(0, I_max, len(I0)))
+    print(multiplier)
+    engine_nk = nk.cn_nekhoroshev(I_max, multiplier, I_star, 1 / (k * 2), 0, I0, dt)
+    
+    # Allocating lists and counter
+    t = []
+    survival = []
+
+    # Starting while loop for fitting procedure
+    step = 0
+    reached = True
+    while(1.0 - engine_nk.get_particle_loss() >= data[-1]):
+        # Append the data
+        t.append(step * iter_step * dt * multiplier)
+        print(t[-1])
+        survival.append(1.0 - engine_nk.get_particle_loss())
+        # Iterate
+        engine_nk.iterate(iter_step)
+        # Evolve counter
+        step += 1
+        if step == 50000:
+            print("End not reached!")
+            reached = False
+            break
+    # Append one last time
+    t.append(step * iter_step * dt * multiplier)
+    survival.append(1.0 - engine_nk.get_particle_loss())
+
+    # Post processing
+    if reached:
+        f = interp1d(t, survival, kind="cubic")
+        inv_f = inversefunc(
+            f,
+            domain=(t[0], t[-1]),
+            image=(survival[-1], survival[0])
+        )
+        point_t = inv_f(data[-1])
+        points_t = np.linspace(0, point_t, len(x))
+        values_f = f(points_t)
+    else:
+        f = interp1d(t, survival, kind="cubic")
+        points_t = np.linspace(0, t[-1], len(x))
+        values_f = f(points_t)
+    return values_f - data
+
+
+def autofit_fp(turns, losses, dt, I0, I_max, iter_step, k_0, I_star_0, method):
+    params = Parameters()
+    params.add("k", value=k_0, min=0, vary=True)
+    params.add("I_star", value=I_star_0, min=0, vary=True)
+
+    minner = Minimizer(fp_lmfit, params, fcn_args=(
+        turns, losses, dt, I0, I_max, iter_step))
+    result = minner.minimize(method=method)
+    final = losses + result.residual
+    return result, final
 
 
 def fp_fitting(lost_table, I_max, I0, k, I_star, dt, iter_step, turn_sampling):
