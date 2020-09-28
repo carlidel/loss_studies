@@ -158,6 +158,7 @@ def model_2_lmfit(params, x, data):
     n0 = params["n0"]
     k = params["k"]
     model = model_2(x, rho, n0, k)
+    model[np.isnan(model)] = 0.0
     return model - data
 
 
@@ -214,6 +215,7 @@ def model_4_lmfit(params, x, data):
     rho = params["rho"]
     k = params["k"]
     model = model_4(x, rho, k)
+    model[np.isnan(model)] = 0.0
     return model - data
 
 
@@ -262,6 +264,7 @@ def model_4_free_lmfit(params, x, data):
     k = params["k"]
     n0 = params["n0"]
     model = model_4_free(x, rho, n0, k)
+    model[np.isnan(model)] = 0.0
     return model - data
 
 
