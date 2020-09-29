@@ -157,9 +157,10 @@ def model_2_lmfit(params, x, data):
     rho = params["rho"]
     n0 = params["n0"]
     k = params["k"]
-    model = model_2(x, rho, n0, k)
-    model[np.isnan(model)] = 0.0
-    return model - data
+    model = rho * np.power(k / (2 * np.exp(1)), k) / (np.power(np.log(x / n0), k))
+    res = model - data
+    res[np.isnan(res)] = 2.0
+    return res
 
 
 def fit_model_2(turns, DA):
@@ -215,8 +216,9 @@ def model_4_lmfit(params, x, data):
     rho = params["rho"]
     k = params["k"]
     model = model_4(x, rho, k)
-    model[np.isnan(model)] = 0.0
-    return model - data
+    res = model - data
+    res[np.isnan(res)] = np.inf
+    return res
 
 
 def fit_model_4(turns, DA):
@@ -264,8 +266,9 @@ def model_4_free_lmfit(params, x, data):
     k = params["k"]
     n0 = params["n0"]
     model = model_4_free(x, rho, n0, k)
-    model[np.isnan(model)] = 0.0
-    return model - data
+    res = model - data
+    res[np.isnan(res)] = np.inf
+    return res
 
 
 def fit_model_4_free(turns, DA):
