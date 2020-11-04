@@ -3,6 +3,10 @@
 .vscode/*
 *.csv
 *.png
+*.err
+*.out
+*.log
+*.hdf5
 
 # Pickle data
 *.pkl
