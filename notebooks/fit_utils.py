@@ -153,33 +153,43 @@ def explore_k_model_2(turns, da, k_min, k_max, n_samples):
     return np.asarray(pars), np.asarray(errs), np.asarray(co_pars)
 
 
-def model_2_lmfit(params, x, data):
+def model_2_lmfit(params, x, data, err=None):
     rho = params["rho"]
     n0 = params["n0"]
     k = params["k"]
     model = rho * np.power(k / (2 * np.exp(1)), k) / (np.power(np.log(x / n0), k))
-    res = model - data
+    if err is None:
+        res = model - data
+    else:
+        res = (model - data) / err
     res[np.isnan(res)] = 2.0
+    res[np.isinf(res)] = 100.0
     return res
 
 
-def fit_model_2(turns, DA):
+def fit_model_2(turns, DA, err=None):
     params = Parameters()
     params.add("rho", value=1, min=0, vary=True)
     params.add("n0", value=1, min=0, max=turns.min() * 0.5, vary=True)
     params.add("k", value=1, min=0, vary=True)
-    minner = Minimizer(model_2_lmfit, params, fcn_args=(turns, DA))
+    if err is None:
+        minner = Minimizer(model_2_lmfit, params, fcn_args=(turns, DA))
+    else:
+        minner = Minimizer(model_2_lmfit, params, fcn_args=(turns, DA, err))
     result = minner.minimize(method="basinhopping")
     final = DA + result.residual
     return result, final
 
 
-def fit_model_2_fixed_n0(turns, DA):
+def fit_model_2_fixed_n0(turns, DA, err=None):
     params = Parameters()
     params.add("rho", value=1, min=0, vary=True)
     params.add("n0", value=1, vary=False)
     params.add("k", value=1, min=0, vary=True)
-    minner = Minimizer(model_2_lmfit, params, fcn_args=(turns, DA))
+    if err is None:
+        minner = Minimizer(model_2_lmfit, params, fcn_args=(turns, DA))
+    else:
+        minner = Minimizer(model_2_lmfit, params, fcn_args=(turns, DA, err))
     result = minner.minimize(method="basinhopping")
     final = DA + result.residual
     return result, final
@@ -212,20 +222,27 @@ def explore_k_model_4(turns, da, k_min, k_max, n_samples):
     return np.asarray(pars), np.asarray(errs), np.asarray(co_pars)
 
 
-def model_4_lmfit(params, x, data):
+def model_4_lmfit(params, x, data, err=None):
     rho = params["rho"]
     k = params["k"]
     model = model_4(x, rho, k)
-    res = model - data
-    res[np.isnan(res)] = np.inf
+    if err is None:
+        res = model - data
+    else:
+        res = (model - data) / err
+    res[np.isnan(res)] = 2.0
+    res[np.isinf(res)] = 100.0
     return res
 
 
-def fit_model_4(turns, DA):
+def fit_model_4(turns, DA, err=None):
     params = Parameters()
     params.add("rho", value=1, min=0, vary=True)
     params.add("k", value=1, min=0, vary=True)
-    minner = Minimizer(model_4_lmfit, params, fcn_args=(turns, DA))
+    if err is None:
+        minner = Minimizer(model_4_lmfit, params, fcn_args=(turns, DA))
+    else:
+        minner = Minimizer(model_4_lmfit, params, fcn_args=(turns, DA, err))
     result = minner.minimize(method="basinhopping")
     final = DA + result.residual
     return result, final
@@ -261,22 +278,29 @@ def explore_model_4_free(turns, da, k_min, k_max, k_samples):
     return np.asarray(pars), np.asarray(errs), np.asarray(co_pars)
 
 
-def model_4_free_lmfit(params, x, data):
+def model_4_free_lmfit(params, x, data, err=None):
     rho = params["rho"]
     k = params["k"]
     n0 = params["n0"]
     model = model_4_free(x, rho, n0, k)
-    res = model - data
-    res[np.isnan(res)] = np.inf
+    if err is None:
+        res = model - data
+    else:
+        res = (model - data) / err
+    res[np.isnan(res)] = 2.0
+    res[np.isinf(res)] = 100.0
     return res
 
 
-def fit_model_4_free(turns, DA):
+def fit_model_4_free(turns, DA, err=None):
     params = Parameters()
     params.add("rho", value=1, min=0, vary=True)
     params.add("n0", value=1, min=0, max=turns.min()*0.5, vary=True)
     params.add("k", value=1, min=0, vary=True)
-    minner = Minimizer(model_4_free_lmfit, params, fcn_args=(turns, DA))
+    if err is None:
+        minner = Minimizer(model_4_free_lmfit, params, fcn_args=(turns, DA))
+    else:
+        minner = Minimizer(model_4_free_lmfit, params, fcn_args=(turns, DA, err))
     result = minner.minimize(method="basinhopping")
     final = DA + result.residual
     return result, final
