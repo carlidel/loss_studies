@@ -39,4 +39,4 @@ engine = hm.radial_block.generate_instance(
 engine.scan_octo(max_turns, mu)
 
 # Saving
-engine.save_values(savepath + "henon_bis_eps_{}_mu_{}.hdf5".format(int(epsilon), int(mu * 100)))
+engine.save_values(savepath + "henon_ter_eps_{}_mu_{}.hdf5".format(epsilon, mu))
