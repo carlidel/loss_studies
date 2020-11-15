@@ -16,6 +16,7 @@ from tqdm.autonotebook import tqdm
 # Personal libraries
 import sixtrackwrap as sx
 import crank_nicolson_numba.nekhoroshev as nk
+import crank_nicolson_numba.polynomial as pl
 
 # Lmfit
 from lmfit import Minimizer, Parameters, report_fit
@@ -307,43 +308,72 @@ def fit_model_4_free(turns, DA, err=None):
 
 # Fokker-Plank
 
-def fp_lmfit(params, x, data, dt, I0, I_max, iter_step):
+def fp(params, dt, I0, I_max, iter_step, multiplier, iters, iter_mult, actual_iters, losses, t_start, t_end):
+    # Gathering parameters
+    k = params["k"]
+    I_star = params["I_star"]
+    
+    engine_nk = nk.cn_nekhoroshev(I_max, multiplier, I_star, 1 / (k * 2), 0, I0, dt)
+    survival = []
+    for i in range(len(iters) * iter_mult):
+        survival.append(1.0 - engine_nk.get_particle_loss())
+        engine_nk.iterate(iter_step)
+    f = interp1d(range(len(survival)), survival, kind="cubic")
+    
+    t = np.linspace(t_start, t_start + (t_end - t_start) * iter_mult, actual_iters)
+    return f(t)
+        
+def new_fp(engine_nk, iters, iter_mult, t_start, t_end, iter_step, actual_iters):
+    engine_nk.reset()
+    survival = []
+    for i in range(len(iters) * iter_mult):
+        survival.append(1.0 - engine_nk.get_particle_loss())
+        engine_nk.iterate(iter_step)
+    f = interp1d(range(len(survival)), survival, kind="cubic")
+    
+    t = np.linspace(t_start, t_start + (t_end - t_start) * iter_mult, actual_iters)
+    return f(t)
+    
+def fp_lmfit(params, x, data, dt, I0, I_max, iter_step, hold_tight=False, more_data=False):
     # Gathering parameters
     k = params["k"]
     I_star = params["I_star"]
 
-    print("k={}, I_star={}".format(k, I_star))
+    #print("k={}, I_star={}".format(k, I_star))
 
     # Declaring the engine
     engine_nk = nk.cn_nekhoroshev(I_max, 1.0, I_star, 1 / (k * 2), 0, I0, dt)
-    multiplier = 0.1 / integrate.simps(engine_nk.diffusion, np.linspace(0, I_max, len(I0)))
-    print(multiplier)
-    engine_nk = nk.cn_nekhoroshev(I_max, multiplier, I_star, 1 / (k * 2), 0, I0, dt)
-    
-    # Allocating lists and counter
-    t = []
-    survival = []
+    multiplier = 0.01 / integrate.simps(engine_nk.diffusion, np.linspace(0, I_max, len(I0)))
 
-    # Starting while loop for fitting procedure
-    step = 0
-    reached = True
-    while(1.0 - engine_nk.get_particle_loss() >= data[-1]):
-        # Append the data
-        t.append(step * iter_step * dt * multiplier)
-        print(t[-1])
+    while True:
+        engine_nk = nk.cn_nekhoroshev(I_max, multiplier, I_star, 1 / (k * 2), 0, I0, dt)
+        # Allocating lists and counter
+        t = []
+        survival = []
+        # Starting while loop for fitting procedure
+        step = 0
+        reached = True
+        while(1.0 - engine_nk.get_particle_loss() >= data[-1]):
+            # Append the data
+            t.append(step)
+            survival.append(1.0 - engine_nk.get_particle_loss())
+            # Iterate
+            engine_nk.iterate(iter_step)
+            # Evolve counter
+            step += 1
+            if not hold_tight and step == 10000:
+                #print("End not reached!")
+                reached = False
+                break
+        # Append one last time
+        t.append(step)
         survival.append(1.0 - engine_nk.get_particle_loss())
-        # Iterate
-        engine_nk.iterate(iter_step)
-        # Evolve counter
-        step += 1
-        if step == 50000:
-            print("End not reached!")
-            reached = False
+        if len(t) > 10:
             break
-    # Append one last time
-    t.append(step * iter_step * dt * multiplier)
-    survival.append(1.0 - engine_nk.get_particle_loss())
-
+        else:
+            #print("decrease multiplier")
+            multiplier /= 10
+            
     # Post processing
     if reached:
         f = interp1d(t, survival, kind="cubic")
@@ -353,13 +383,19 @@ def fp_lmfit(params, x, data, dt, I0, I_max, iter_step):
             image=(survival[-1], survival[0])
         )
         point_t = inv_f(data[-1])
-        points_t = np.linspace(0, point_t, len(x))
+        point_s = inv_f(data[0])
+        points_t = np.linspace(point_s, point_t, len(x))
         values_f = f(points_t)
     else:
         f = interp1d(t, survival, kind="cubic")
         points_t = np.linspace(0, t[-1], len(x))
-        values_f = f(points_t)
-    return values_f - data
+        point_s = 0
+        point_t = t[-1]
+        values_f = f(points_t) * 10
+    if more_data:
+        return engine_nk, t, point_s, point_t, iter_step
+    else:
+        return values_f - data
 
 
 def autofit_fp(turns, losses, dt, I0, I_max, iter_step, k_0, I_star_0, method):
@@ -373,297 +409,185 @@ def autofit_fp(turns, losses, dt, I0, I_max, iter_step, k_0, I_star_0, method):
     final = losses + result.residual
     return result, final
 
+# Fokker-Plank (POLYNOMIAL)
 
-def fp_fitting(lost_table, I_max, I0, k, I_star, dt, iter_step, turn_sampling):
-    """Function for Fokker-Planck fitting given the fixed parameters
-
-    Parameters
-    ----------
-    lost_table : ndarray
-        lost data (without the 0.0 point!)
-    I_max : float
-        absorbing barrier location
-    I0 : ndarray
-        initial distribution in action
-    k : float
-        nek parameter
-    I_star : float
-        nek parameter
-    dt : float
-        dt in crank-nicolson
-    iter_step : int
-        number of iterations per step to do in crank-nicolson
-    turn_sampling : ndarray
-        turns at which the sampling was done (without the t_max point!)
-
-    Returns
-    -------
-    tuple of data
-        values_f, np.asarray(t)[::-1], error, step
-    """    
-    # Let's print!
-    print("k={}, I_star={}, dt={}".format(k, I_star, dt))
+def fp_poly(params, dt, I0, I_max, iter_step, multiplier, iters, iter_mult, actual_iters, losses, t_start, t_end):
+    # Gathering parameters
+    exponent = params["exponent"]
     
-    # fixing the data
-    lost_table = np.concatenate((lost_table, [1.0]))
-    turn_sampling = np.concatenate((turn_sampling, [0.0]))
+    engine_nk = pl.cn_polynomial(I_max, multiplier, exponent, I0, dt)
+    survival = []
+    for i in range(len(iters) * iter_mult):
+        survival.append(1.0 - engine_nk.get_particle_loss())
+        engine_nk.iterate(iter_step)
+    f = interp1d(range(len(survival)), survival, kind="cubic")
+    
+    t = np.linspace(t_start, t_start + (t_end - t_start) * iter_mult, actual_iters)
+    return f(t)
+
+def fp_lmfit_poly(params, x, data, dt, I0, I_max, iter_step, hold_tight=False, more_data=False):
+    # Gathering parameters
+    exponent = params["exponent"]
     
     # Declaring the engine
-    engine_nk = nk.cn_nekhoroshev(I_max, 1.0, I_star, 1 / (k * 2), 0, I0, dt)
+    engine_nk = pl.cn_polynomial(I_max, 1.0, exponent, I0, dt)
     
-    # Allocating lists and counter
-    t = []
-    survival = []
-    
-    # Starting while loop for fitting procedure
-    step = 0
-    while(1.0 - engine_nk.get_particle_loss() >= lost_table[0]):
-        # Append the data
-        t.append(step * iter_step * dt)
+    multiplier = 0.01 / integrate.simps(engine_nk.diffusion, np.linspace(0, I_max, len(I0)))
+
+    while True:
+        engine_nk = pl.cn_polynomial(I_max, multiplier, exponent, I0, dt)
+        
+        # Allocating lists and counter
+        t = []
+        survival = []
+        # Starting while loop for fitting procedure
+        step = 0
+        reached = True
+        while(1.0 - engine_nk.get_particle_loss() >= data[-1]):
+            # Append the data
+            t.append(step)
+            survival.append(1.0 - engine_nk.get_particle_loss())
+            # Iterate
+            engine_nk.iterate(iter_step)
+            # Evolve counter
+            step += 1
+            if not hold_tight and step == 10000:
+                #print("End not reached!")
+                reached = False
+                break
+        # Append one last time
+        t.append(step)
         survival.append(1.0 - engine_nk.get_particle_loss())
-        # Iterate
-        engine_nk.iterate(iter_step)
-        # Evolve counter
-        step += 1
-        if step == 10000:
-            print("This thing is going for a LONG ride!")
-    # Append one last time
-    t.append(step * iter_step * dt)
-    survival.append(1.0 - engine_nk.get_particle_loss())
+        if len(t) > 10:
+            break
+        else:
+            #print("decrease multiplier")
+            multiplier /= 10
+            
     # Post processing
-    f = interp1d(t, survival, kind="cubic")
-    inv_f = inversefunc(
-        f,
-        domain=(t[0], t[-1]),
-        image=(survival[-1], survival[0])
-    )
-    point_t = inv_f(lost_table[0])
-    points_t = np.linspace(0, point_t, len(turn_sampling))
-    values_f = f(points_t)
-    values_f = values_f[::-1]
-    error = chi_2(lost_table, values_f)
-    # Returning the thing
-    return values_f, np.asarray(t)[::-1], error, step
-
-
-def scan_I_star(lost_table, turn_sampling, I_max, I0, k, I_star_start, dt, iter_step, step_proportion=0.05):
-    """Automated I_star fitting procedure for FP process.
-
-    Parameters
-    ----------
-    lost_table : ndarray
-        lost data
-    turn_sampling : ndarray
-        turn_sampling for lost_table
-    I_max : float
-        absorbing barrier location
-    I0 : ndarray
-        initial distribution
-    k : flaot
-        nek parameter
-    I_star_start : float
-        starting point for the search
-    dt : float
-        starting time scale for cn
-    iter_step : int
-        number of cn iterations per step
-    step_proportion : float, optional
-        multiplier factor for the research procedure, by default 0.05
-
-    Returns
-    -------
-    tuple
-        values, I_star, t, error
-    """    
-    # Setup lists
-    I_star_sampled = []
-    errors = []
-    # Setup first extra 2 I_star values
-    I_star_up = I_star_start * (1 + step_proportion)
-    I_star_down = I_star_start * (1 - step_proportion)
-
-    # first 3 analysis
-    values_down, t_down, error_down, step_down = fp_fitting(
-        lost_table, I_max, I0, k, I_star_down, dt, iter_step, turn_sampling)
-    if step_down > 1000:
-        print("down increase!")
-        dt *= 10
-    values_start, t_start, error_start, step_start = fp_fitting(
-        lost_table, I_max, I0, k, I_star_start, dt, iter_step, turn_sampling)
-    if step_start > 1000:
-        print("start increase!")
-        dt *= 10
-    values_up, t_up, error_up, step_up = fp_fitting(
-        lost_table, I_max, I0, k, I_star_up, dt, iter_step, turn_sampling)
-    if step_up > 1000:
-        print("up increase!")
-        dt *= 10
-
-    I_star_sampled.append(I_star_start)
-    errors.append(error_start)
-
-    if error_up < error_start and error_up < error_down:
-        print("Going UP!")
-        I_star_sampled.append(I_star_up)
-        errors.append(error_up)
-        I_star_now = I_star_up
-        values_now = values_up
-        t_now = t_up
-        while errors[-1] < errors[-2]:
-            I_star_new = I_star_now * (1 + step_proportion)
-            values, t, error, step = fp_fitting(
-                lost_table, I_max, I0, k, I_star_new, dt, iter_step, turn_sampling)
-            if error > errors[-1]:
-                I_star_sampled.append(I_star_new)
-                errors.append(error)
-                break
-            values_now = values
-            t_now = t
-            I_star_now = I_star_new
-            I_star_sampled.append(I_star_now)
-            errors.append(error)
-            if step > 1000:
-                print("increase!")
-                dt *= 10
-        return values_now, I_star_now, t_now, np.min(errors)
-
-    elif error_down < error_start and error_down < error_up:
-        print("Going DOWN!")
-        I_star_sampled.append(I_star_down)
-        errors.append(error_down)
-        I_star_now = I_star_down
-        values_now = values_down
-        t_now = t_down
-        while errors[-1] < errors[-2]:
-            I_star_new = I_star_now * (1 - step_proportion)
-            values, t, error, step = fp_fitting(
-                lost_table, I_max, I0, k, I_star_new, dt, iter_step, turn_sampling)
-            if error > errors[-1]:
-                I_star_sampled.append(I_star_new)
-                errors.append(error)
-                break
-            values_now = values
-            t_now = t
-            I_star_now = I_star_new
-            I_star_sampled.append(I_star_now)
-            errors.append(error)
-            if step > 1000:
-                print("increase!")
-                dt *= 2
-        return values_now, I_star_now, t_now, np.min(errors)
-
+    if reached:
+        f = interp1d(t, survival, kind="cubic")
+        inv_f = inversefunc(
+            f,
+            domain=(t[0], t[-1]),
+            image=(survival[-1], survival[0])
+        )
+        point_t = inv_f(data[-1])
+        point_s = inv_f(data[0])
+        points_t = np.linspace(point_s, point_t, len(x))
+        values_f = f(points_t)
     else:
-        print("STAYNG HERE!")
-        return values_start, I_star_start, t_start, np.min(errors)
-
-
-def scan_k(lost_table, turn_sampling, I_max, I0, k_start, I_star_start, dt, iter_step, step_proportion=0.05, k_proportion_step=0.05):
-    """Automated k fitting procedure for FP process (with nested I_star fitting)
-
-    Parameters
-    ----------
-    lost_table : ndarray
-        lost data
-    turn_sampling : ndarray
-        turn sampling for lost_table
-    I_max : float
-        absorbing barrier location
-    I0 : ndarray
-        initial distribution
-    k_start : float
-        starting point for k
-    I_star_start : float
-        general starting point for I_star
-    dt : float
-        starting time scale for cn
-    iter_step : int
-        number of cn iterations per step
-    step_proportion : float, optional
-        multplier factor for research procedure in I_star, by default 0.05
-    k_proportion_step : float, optional
-        multiplier factor for research procedure in k, by default 0.05
-
-    Returns
-    -------
-    tuple
-        values, k, I_star, t, error
-    """    
-    k_up = k_start * (1 + k_proportion_step)
-    k_down = k_start * (1 - k_proportion_step)
-
-    I_star_default = 0.2
-
-    k_sampled = []
-    I_star_selected = []
-    errors = []
-
-    dt = 0.001
-
-    #first 3 steps
-    values_down, I_star_down, t_down, error_down = scan_I_star(
-        lost_table, turn_sampling, I_max, I0, k_down, I_star_default, dt, iter_step)
-    values_start, I_star_start, t_start, error_start = scan_I_star(
-        lost_table, turn_sampling, I_max, I0, k_start, I_star_default, dt, iter_step)
-    values_up, I_star_up, t_up, error_up = scan_I_star(
-        lost_table, turn_sampling, I_max, I0, k_up, I_star_default, dt, iter_step)
-
-    k_sampled.append(k_start)
-    I_star_selected.append(I_star_start)
-    errors.append(error_start)
-
-    if error_up < error_start and error_up < error_down:
-        print("Going UP with k!!!")
-        k_sampled.append(k_up)
-        I_star_selected.append(I_star_up)
-        errors.append(error_up)
-        k_now = k_up
-        I_star_now = I_star_up
-        values_now = values_up
-        t_now = t_up
-        while errors[-1] < errors[-2]:
-            k_new = k_now * (1 + k_proportion_step)
-            values, I_star, t, error = scan_I_star(
-                lost_table, turn_sampling, I_max, I0, k_new, I_star_default, dt, iter_step)
-            if error > errors[-1]:
-                k_sampled.append(k_new)
-                I_star_selected.append(I_star)
-                errors.append(error)
-                break
-            values_now = values
-            t_now = t
-            k_now = k_new
-            I_star_now = I_star
-            k_sampled.append(k_now)
-            I_star_selected.append(I_star_now)
-            errors.append(error)
-        return values_now, k_now, I_star_now, t_now, np.min(errors)
-
-    elif error_down < error_start and error_down < error_up:
-        print("Going DOWN with k!!!")
-        k_sampled.append(k_down)
-        I_star_selected.append(I_star_down)
-        errors.append(error_down)
-        k_now = k_down
-        I_star_now = I_star_down
-        values_now = values_down
-        t_now = t_down
-        while errors[-1] < errors[-2]:
-            k_new = k_now * (1 - k_proportion_step)
-            values, I_star, t, error = scan_I_star(
-                lost_table, turn_sampling, I_max, I0, k_new, I_star_default, dt, iter_step)
-            if error > errors[-1]:
-                k_sampled.append(k_new)
-                I_star_selected.append(I_star)
-                errors.append(error)
-                break
-            values_now = values
-            t_now = t
-            k_now = k_new
-            I_star_now = I_star
-            k_sampled.append(k_now)
-            I_star_selected.append(I_star_now)
-            errors.append(error)
-        return values_now, k_now, I_star_now, t_now, np.min(errors)
+        f = interp1d(t, survival, kind="cubic")
+        points_t = np.linspace(0, t[-1], len(x))
+        values_f = f(points_t) * 10
+    if more_data:
+        return engine_nk, t, point_s, point_t, iter_step
     else:
-        print("STAYNG HERE!")
-        return values_start, k_start, I_star_start, t_start, error_start
+        return values_f - data
+
+
+def autofit_fp_poly(turns, losses, dt, I0, I_max, iter_step, exp_0, method):
+    params = Parameters()
+    params.add("exponent", value=exp_0, min=0, vary=True)
+
+    minner = Minimizer(fp_lmfit_poly, params, fcn_args=(
+        turns, losses, dt, I0, I_max, iter_step))
+    result = minner.minimize(method=method)
+    final = losses + result.residual
+    return result, final
+
+# Fokker-Plank (POLYNOMIAL WITH I_STAR)
+
+def fp_poly_istar(params, dt, I0, I_max, iter_step, multiplier, iters, iter_mult, actual_iters, losses, t_start, t_end):
+    # Gathering parameters
+    exponent = params["exponent"]
+    istar = params["istar"]
+    
+    engine_nk = pl.cn_polynomial(I_max, multiplier, exponent, I0, dt, I_star=istar)
+    survival = []
+    for i in range(len(iters) * iter_mult):
+        survival.append(1.0 - engine_nk.get_particle_loss())
+        engine_nk.iterate(iter_step)
+    f = interp1d(range(len(survival)), survival, kind="cubic")
+    
+    t = np.linspace(t_start, t_start + (t_end - t_start) * iter_mult, actual_iters)
+    return f(t)
+
+def fp_lmfit_poly_istar(params, x, data, dt, I0, I_max, iter_step, hold_tight=False, more_data=False):
+    # Gathering parameters
+    exponent = params["exponent"]
+    istar = params["istar"]
+    
+    # Declaring the engine
+    engine_nk = pl.cn_polynomial(I_max, 1.0, exponent, I0, dt, I_star=istar)
+    
+    multiplier = 0.01 / integrate.simps(engine_nk.diffusion, np.linspace(0, I_max, len(I0)))
+
+    while True:
+        engine_nk = pl.cn_polynomial(I_max, multiplier, exponent, I0, dt, I_star=istar)
+        
+        # Allocating lists and counter
+        t = []
+        survival = []
+        # Starting while loop for fitting procedure
+        step = 0
+        reached = True
+        while(1.0 - engine_nk.get_particle_loss() >= data[-1]):
+            # Append the data
+            t.append(step)
+            survival.append(1.0 - engine_nk.get_particle_loss())
+            # Iterate
+            engine_nk.iterate(iter_step)
+            # Evolve counter
+            step += 1
+            if not hold_tight and step == 10000:
+                #print("End not reached!")
+                reached = False
+                break
+        # Append one last time
+        t.append(step)
+        survival.append(1.0 - engine_nk.get_particle_loss())
+        if len(t) > 10:
+            break
+        else:
+            #print("decrease multiplier")
+            multiplier /= 10
+            # If everything is just... shitty
+            if multiplier < 1e-12:
+                if more_data:
+                    return engine_nk, t, 0, t[-1], iter_step
+                else:
+                    return data
+            
+    # Post processing
+    if reached:
+        f = interp1d(t, survival, kind="cubic")
+        inv_f = inversefunc(
+            f,
+            domain=(t[0], t[-1]),
+            image=(survival[-1], survival[0])
+        )
+        point_t = inv_f(data[-1])
+        point_s = inv_f(data[0])
+        points_t = np.linspace(point_s, point_t, len(x))
+        values_f = f(points_t)
+    else:
+        f = interp1d(t, survival, kind="cubic")
+        points_t = np.linspace(0, t[-1], len(x))
+        values_f = f(points_t) * 10
+    if more_data:
+        return engine_nk, t, point_s, point_t, iter_step
+    else:
+        return values_f - data
+
+
+def autofit_fp_poly_istar(turns, losses, dt, I0, I_max, iter_step, exp_0, method):
+    params = Parameters()
+    params.add("exponent", value=exp_0, min=0, vary=True)
+    params.add("istar", value=1.0, min=0, vary=True)
+
+    minner = Minimizer(fp_lmfit_poly_istar, params, fcn_args=(
+        turns, losses, dt, I0, I_max, iter_step))
+    result = minner.minimize(method=method)
+    final = losses + result.residual
+    return result, final
